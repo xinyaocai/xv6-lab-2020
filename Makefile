@@ -149,6 +149,11 @@ UPROGS=\
 	$U/_grind\
 	$U/_wc\
 	$U/_zombie\
+	$U/_sleep\
+	$U/_pingpong\
+	$U/_primes\
+	$U/_test\
+
 
 
 ifeq ($(LAB),syscall)
@@ -303,3 +308,6 @@ myapi.key:
 
 
 .PHONY: handin tarball tarball-pref clean grade handin-check
+
+gdb:
+	riscv64-unknown-elf-gdb --data-directory=/usr/local/Cellar/gdb/10.1/share/gdb kernel/kernel
