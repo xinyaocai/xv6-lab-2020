@@ -3,29 +3,26 @@
 #include "user/user.h"
 #include "kernel/fs.h"
 
+void make_null_str(char arr[100]) {
+    for (int i = 0; i < 100; i++) {
+        arr[i] = '\0';
+    }
+}
+
 char*
 fmtname(char *path)
 {
-  static char buf[DIRSIZ+1];
-  char *p;
-
-  // Find first character after last slash.
-  for(p=path+strlen(path); p >= path && *p != '/'; p--)
-    ;
-  p++;
-
-  // Return blank-padded name.
-  if(strlen(p) >= DIRSIZ)
-    return p;
-  memmove(buf, p, strlen(p));
-  memset(buf+strlen(p), ' ', DIRSIZ-strlen(p));
-  return buf;
+    int i = strlen(path);
+    for (; i >= 0; i--)
+        if (path[i] == '/')
+            break;
+    return path+i+1;
 }
 
-void find(char *path, char *aim, char *ans[], int *cnt) {
+void find(char *path, char *aim) {
     int fd;
     struct stat st;
-    
+
     if((fd = open(path, 0)) < 0){
         fprintf(2, "find: cannot open %s\n", path);
         return;
@@ -37,36 +34,40 @@ void find(char *path, char *aim, char *ans[], int *cnt) {
         return;
     }
 
+    struct dirent de;
+
     switch(st.type) {
-        case T_FILE:
-            if (strcmp(fmtname(path), aim) == 0)
-                ans[(*cnt)++] = path;
-            break;
-        case T_DIR:
-            struct dirent dt;
-            while (read(fd, &dt, sizeof(dt)) == sizeof(dt)) {
-                if (dt.inum == 0) continue;
-                
+        case T_FILE: {
+            if (strcmp(fmtname(path), aim) == 0) {
+                printf(path);
+                printf("\n");
             }
+            break;
+        }
+        case T_DIR: {
+            while (read(fd, &de, sizeof(de)) == sizeof(de)) {
+                if (de.inum == 0 || strcmp(de.name, ".")==0 || strcmp(de.name, "..")==0) continue;
+                char next_path[100], *p = next_path;
+                make_null_str(next_path);
+                strcpy(next_path, path);
+                p += strlen(next_path);
+                *p++ = '/';
+                strcpy(p, de.name);
+                find(next_path, aim);
+            }
+        }
     }
+
+    close(fd);
 }
 
 int
-main(int argc, char *args[]) {
-    if (argc < 3) {
+main(int argc, char *argv[]) {
+    if (argc != 3) {
         fprintf(2, "invalid args.\n");
         exit(1);
     }
-
-    char *path = args[1], *aim = args[2];
-    char *ans[100];
-    int cnt = 0;
-    find(path, aim, ans, &cnt);
-
-    for (int i = 0; i < cnt; i++) {
-        printf(ans[i]);
-        printf('\n');
-    }
-    
-
+    char *path = argv[1], *aim = argv[2];
+    find(path, aim);
+    exit(0);
 }
