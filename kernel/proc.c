@@ -6,6 +6,7 @@
 #include "proc.h"
 #include "defs.h"
 
+
 struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
@@ -20,6 +21,7 @@ static void wakeup1(struct proc *chan);
 static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
+extern char etext[];
 
 // initialize the proc table at boot time.
 void
@@ -34,14 +36,7 @@ procinit(void)
       // Allocate a page for the process's kernel stack.
       // Map it high in memory, followed by an invalid
       // guard page.
-      char *pa = kalloc();
-      if(pa == 0)
-        panic("kalloc");
-      uint64 va = KSTACK((int) (p - proc));
-      kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
-      p->kstack = va;
   }
-  kvminithart();
 }
 
 // Must be called with interrupts disabled,
@@ -107,6 +102,15 @@ allocproc(void)
 found:
   p->pid = allocpid();
 
+  p->kpagetable = kvmmake();
+
+  char *pa = kalloc();
+  if(pa == 0)
+    panic("kstack: kalloc");
+  uint64 va = TRAMPOLINE - 2*PGSIZE;
+  mappages(p->kpagetable, va, PGSIZE, (uint64)pa, PTE_R | PTE_W);
+  p->kstack = va;
+
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     release(&p->lock);
@@ -126,8 +130,23 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
-
   return p;
+}
+
+void
+proc_freekpagetable(pagetable_t kpagetable)
+{ 
+  for (int i = 0; i < 512; i++) {
+		pte_t pte = kpagetable[i];
+		if (pte & PTE_V) {
+			kpagetable[i] = 0;
+			if ((pte & (PTE_R|PTE_W|PTE_X)) == 0) {
+				uint64 child = PTE2PA(pte);
+				proc_freekpagetable((pagetable_t)child);
+			}
+		}
+	} 
+	kfree((void*)kpagetable);
 }
 
 // free a proc structure and the data hanging from it,
@@ -142,6 +161,16 @@ freeproc(struct proc *p)
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
+  if (p->kstack) {
+    pte_t *pte = walk(p->kpagetable, p->kstack, 0);
+    if (pte == 0)
+      panic("freeproc: walk");
+    kfree((void*)PTE2PA(*pte));
+    p->kstack = 0;
+  }
+  if (p->kpagetable) {
+    proc_freekpagetable(p->kpagetable);
+  }
   p->sz = 0;
   p->pid = 0;
   p->parent = 0;
@@ -258,9 +287,10 @@ growproc(int n)
 int
 fork(void)
 {
-  int i, pid;
+  int i, pid, j;
   struct proc *np;
   struct proc *p = myproc();
+  pte_t *pte, *kernelPte;
 
   // Allocate process.
   if((np = allocproc()) == 0){
@@ -273,6 +303,13 @@ fork(void)
     release(&np->lock);
     return -1;
   }
+
+  for (j = 0; j < p->sz; j+=PGSIZE) {
+    pte = walk(np->pagetable, j, 0);
+    kernelPte = walk(np->kpagetable, j, 1);
+    *kernelPte = (*pte) & ~PTE_U;
+  }
+  
   np->sz = p->sz;
 
   np->parent = p;
@@ -463,7 +500,6 @@ scheduler(void)
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
-    
     int found = 0;
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
@@ -473,12 +509,13 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        w_satp(MAKE_SATP(p->kpagetable));
+        sfence_vma();
         swtch(&c->context, &p->context);
-
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
-
+        kvminithart();
         found = 1;
       }
       release(&p->lock);
