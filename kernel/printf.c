@@ -132,3 +132,18 @@ printfinit(void)
   initlock(&pr.lock, "pr");
   pr.locking = 1;
 }
+
+void bt_helper(uint64 fp)
+{
+  if (fp >= PGROUNDUP(fp))
+    return;
+  printf("%p\n", *(uint64*)(fp-8));
+  bt_helper(*(uint64*)(fp-16));
+}
+
+void backtrace()
+{
+  printf("backtrace:\n");
+  bt_helper(r_fp());
+}
+
