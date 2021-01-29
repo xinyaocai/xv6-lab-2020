@@ -2236,9 +2236,10 @@ sbrkarg(char *s)
     exit(1);
   }
   close(fd);
-
+  printf("2\n");
   // test writes to allocated memory
   a = sbrk(PGSIZE);
+  printf("3\n");
   if(pipe((int *) a) != 0){
     printf("%s: pipe() failed\n", s);
     exit(1);
@@ -2443,6 +2444,7 @@ sbrkbugs(char *s)
     // would not adjust p->sz correctly in this case,
     // causing exit() to panic.
     sbrk(-sz);
+    printf("ooo!\n");
     // user page fault here.
     exit(0);
   }
