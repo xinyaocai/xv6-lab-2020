@@ -389,6 +389,7 @@ exit(int status)
 
   // Jump into the scheduler, never to return.
   sched();
+
   panic("zombie exit");
 }
 
