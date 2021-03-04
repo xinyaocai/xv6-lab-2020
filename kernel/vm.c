@@ -325,7 +325,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       flags = (flags | PTE_COW) & (~PTE_W);
       *pte = PA2PTE(pa) | flags;
     }
-    
+    increase_rc((void*)pa);
     if(mappages(new, i, PGSIZE, pa, flags) != 0) {
       goto err;
     }
