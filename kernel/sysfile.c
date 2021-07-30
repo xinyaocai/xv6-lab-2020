@@ -484,3 +484,100 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64
+sys_mmap() {
+  uint64 addr;
+  int length, prot, flags, offset, fd;
+  struct file *mfile;
+  if (argaddr(0, &addr)<0 || argint(1, &length)<0 || argint(2, &prot)<0 || argint(3, &flags)<0
+      || argfd(4, &fd, &mfile)<0 || argint(5, &offset)<0)
+    return -1;
+
+  if (length < 1 || offset < 0)
+    return -1;
+  
+  if (flags & MAP_SHARED) {
+    char fwritable = mfile->writable, mwritable = 0;
+    if (prot & PROT_WRITE)
+      mwritable = 1;
+    if (fwritable != mwritable)
+      return -1;
+  }
+
+  struct proc *p = myproc();
+  struct mmap_entry *me = 0;
+
+  for (int i = 0; i < NMMAP; i += 1) {
+    if (!p->mmaps[i].valid) {
+      me = &p->mmaps[i];
+    }
+  }
+
+  if (me == 0)
+    return -1;
+
+  me->valid = 1;
+  me->permit = prot;
+
+  me->vmaddr = p->sz;
+  p->sz += length;
+
+  me->length = length;
+  me->flags = flags;
+
+  me->mfp = mfile;
+  me->mfp->ref++;
+  me->offset = offset;
+  return me->vmaddr;
+}
+
+uint64
+sys_munmap() {
+  uint64 addr;
+  int length;
+
+  if (argaddr(0, &addr)<0 || argint(1, &length)<0)
+    return -1;
+
+  if (length < 1)
+    return -1;
+  
+  struct proc *p = myproc();
+  struct mmap_entry *me = 0;
+
+  for (int i = 0; i < NMMAP; i += 1) {
+    uint64 vmaddr = p->mmaps[i].vmaddr;
+    if (p->mmaps[i].valid && (addr == vmaddr || addr+length == vmaddr + p->mmaps[i].length)) {
+      me = &p->mmaps[i];
+      break;
+    }
+  }
+
+  if (me == 0)
+    return -1;
+  
+  if (me->flags & MAP_SHARED) {
+    struct inode *ip = me->mfp->ip;
+    ilock(ip);
+    begin_op();
+    writei(ip, 1, addr, addr - me->vmaddr + me->offset, length);
+    end_op();
+    iunlock(ip);
+  }
+
+  if (length == me->length) {
+    me->valid = 0;
+    me->mfp->ref--;
+  } else if (addr == me->vmaddr) {
+    me->vmaddr +=length;
+    me->length -= length;
+    me->offset += length;
+  } else if (addr+length == me->vmaddr+me->length) {
+    me->length -= length;
+  } else {
+    return -1;
+  }
+
+  return 0;
+}

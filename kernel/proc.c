@@ -5,6 +5,10 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
+#include "fcntl.h"
 
 struct cpu cpus[NCPU];
 
@@ -274,6 +278,21 @@ fork(void)
     return -1;
   }
 
+  for (int i = 0; i < NMMAP; i++) {
+    struct mmap_entry *pme = &p->mmaps[i];
+    if (pme->valid) {
+      struct mmap_entry *sme = &np->mmaps[i];
+      sme->flags = pme->flags;
+      sme->length = pme->length;
+      sme->mfp = pme->mfp;
+      sme->mfp->ref++;
+      sme->offset = pme->offset;
+      sme->permit = pme->permit;
+      sme->valid = 1;
+      sme->vmaddr = pme->vmaddr;
+    }
+  }
+
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);
@@ -343,6 +362,23 @@ exit(int status)
 
   if(p == initproc)
     panic("init exiting");
+
+  for (int i = 0; i < NMMAP; i += 1) {
+    struct mmap_entry *me = &p->mmaps[i];
+    if (me->valid && (me->flags & MAP_SHARED)) {
+      struct inode *ip = me->mfp->ip;
+      ilock(ip);
+      for (uint64 a = me->vmaddr; a < me->vmaddr+me->length; a += PGSIZE) {
+        if (walkaddr(p->pagetable, a)) {
+          begin_op();
+          writei(ip, 1, a, me->offset, me->length);
+          end_op();
+        }
+      }
+      iunlock(ip);
+      me->mfp->ref--;
+    }
+  }
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){

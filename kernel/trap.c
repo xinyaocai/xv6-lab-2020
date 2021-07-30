@@ -5,6 +5,10 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
+#include "fcntl.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -49,8 +53,54 @@ usertrap(void)
   
   // save user program counter.
   p->trapframe->epc = r_sepc();
-  
-  if(r_scause() == 8){
+
+  uint64 rcause = r_scause();
+  if (rcause == 13 || rcause == 15) {
+    uint64 stval = r_stval();
+    struct mmap_entry *me = 0;
+
+    for (int i = 0; i < NMMAP; i++) {
+      uint64 addr = p->mmaps[i].vmaddr;
+      if (p->mmaps[i].valid && stval >= addr && stval < addr + p->mmaps[i].length) {
+        me = &p->mmaps[i];
+        break;
+      }
+    }
+
+    if (me == 0) {
+      p->killed = 1;
+      exit(-1);
+    }
+
+    uint64 pa = (uint64) kalloc();
+    if (pa == 0) {
+      p->killed = 1;
+      exit(-1);
+    }
+    memset((void*)pa, 0, PGSIZE);
+    
+    int prot = 0;
+    if (me->permit & PROT_READ)
+      prot |= PTE_R;
+
+    if (me->permit & PROT_WRITE)
+      prot |= PTE_W;
+    
+    if (me->permit & PROT_EXEC)
+      prot |= PTE_X;
+
+    if (mappages(p->pagetable, stval, PGSIZE, pa, prot | PTE_U) != 0) {
+      kfree((void*)pa);
+      p->killed = 1;
+      exit(-1);
+    }
+
+    struct inode *ip = me->mfp->ip;
+    ilock(ip);
+    readi(ip, 1, stval, stval - me->vmaddr + me->offset, PGSIZE);
+    iunlock(ip);
+
+  } else if(r_scause() == 8){
     // system call
 
     if(p->killed)

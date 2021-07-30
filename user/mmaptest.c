@@ -111,6 +111,7 @@ mmap_test(void)
   // offset in the file.
   //
   char *p = mmap(0, PGSIZE*2, PROT_READ, MAP_PRIVATE, fd, 0);
+  printf("p: %p\n", p);
   if (p == MAP_FAILED)
     err("mmap (1)");
   _v1(p);
@@ -156,6 +157,7 @@ mmap_test(void)
   if ((fd = open(f, O_RDWR)) == -1)
     err("open");
   p = mmap(0, PGSIZE*3, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  printf("pp: %p\n", p);
   if (p == MAP_FAILED)
     err("mmap (3)");
   if (close(fd) == -1)
@@ -211,6 +213,8 @@ mmap_test(void)
   if(write(fd1, "12345", 5) != 5)
     err("write mmap1");
   char *p1 = mmap(0, PGSIZE, PROT_READ, MAP_PRIVATE, fd1, 0);
+  printf("p1ppp: %p\n", p1);
+
   if(p1 == MAP_FAILED)
     err("mmap mmap1");
   close(fd1);
@@ -262,16 +266,16 @@ fork_test(void)
     err("open");
   unlink(f);
   char *p1 = mmap(0, PGSIZE*2, PROT_READ, MAP_SHARED, fd, 0);
+  printf("p1: %p\n", p1);
   if (p1 == MAP_FAILED)
     err("mmap (4)");
   char *p2 = mmap(0, PGSIZE*2, PROT_READ, MAP_SHARED, fd, 0);
+  printf("p2: %p\n", p2);
   if (p2 == MAP_FAILED)
     err("mmap (5)");
-
   // read just 2nd page.
   if(*(p1+PGSIZE) != 'A')
     err("fork mismatch (1)");
-
   if((pid = fork()) < 0)
     err("fork");
   if (pid == 0) {
