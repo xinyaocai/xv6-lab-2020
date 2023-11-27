@@ -9,6 +9,16 @@
 
 static int loadseg(pde_t *pgdir, uint64 addr, struct inode *ip, uint offset, uint sz);
 
+
+/*
+  1. read the ELF binary by the path, validate the elf header
+  2. create a new pagetable, allocate memory and copy the content (segments) of the binary to it
+  3. allocate memory for stack and its guardpage
+  4. copy the arguments to the new stack
+  5. set the PC reg of userspace to the start point of the elf, set the sp to the new stack
+  6. replace the pagetable of the proc with the new one.
+  7. return to userspace
+  */
 int
 exec(char *path, char **argv)
 {
@@ -22,14 +32,14 @@ exec(char *path, char **argv)
   struct proc *p = myproc();
 
   begin_op();
-
+  // 根据path拿到inode
   if((ip = namei(path)) == 0){
     end_op();
     return -1;
   }
   ilock(ip);
 
-  // Check ELF header
+  // Check ELF header 读elf头
   if(readi(ip, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf))
     goto bad;
   if(elf.magic != ELF_MAGIC)
@@ -37,7 +47,7 @@ exec(char *path, char **argv)
 
   if((pagetable = proc_pagetable(p)) == 0)
     goto bad;
-
+  // 把为ELF里每一段分配内存，并将其内容拷贝进来，第一次执行这段时，p->sz是0，内存也是分配给新页表的
   // Load program into memory.
   for(i=0, off=elf.phoff; i<elf.phnum; i++, off+=sizeof(ph)){
     if(readi(ip, 0, (uint64)&ph, off, sizeof(ph)) != sizeof(ph))
@@ -63,7 +73,7 @@ exec(char *path, char **argv)
 
   p = myproc();
   uint64 oldsz = p->sz;
-
+  // 分配栈和栈的guardpage
   // Allocate two pages at the next page boundary.
   // Use the second as the user stack.
   sz = PGROUNDUP(sz);
@@ -71,10 +81,11 @@ exec(char *path, char **argv)
   if((sz1 = uvmalloc(pagetable, sz, sz + 2*PGSIZE)) == 0)
     goto bad;
   sz = sz1;
+  // 取消guradpage的valid，实现踩雷特性
   uvmclear(pagetable, sz-2*PGSIZE);
   sp = sz;
   stackbase = sp - PGSIZE;
-
+  // 将exec的argv参数字符串们（argc个字符串的内容）拷贝到用户栈上
   // Push argument strings, prepare rest of stack in ustack.
   for(argc = 0; argv[argc]; argc++) {
     if(argc >= MAXARG)
@@ -88,7 +99,8 @@ exec(char *path, char **argv)
     ustack[argc] = sp;
   }
   ustack[argc] = 0;
-
+  // 将将exec的argv参数字符串们（argc个char*指针）拷贝到用户栈上
+  // 这些指针指向刚才拷贝到栈上的字符串们
   // push the array of argv[] pointers.
   sp -= (argc+1) * sizeof(uint64);
   sp -= sp % 16;
@@ -96,7 +108,7 @@ exec(char *path, char **argv)
     goto bad;
   if(copyout(pagetable, sp, (char *)ustack, (argc+1)*sizeof(uint64)) < 0)
     goto bad;
-
+  // a1是calling convention中存放第二个参数的reg
   // arguments to user main(argc, argv)
   // argc is returned via the system call return
   // value, which goes in a0.
@@ -107,7 +119,7 @@ exec(char *path, char **argv)
     if(*s == '/')
       last = s+1;
   safestrcpy(p->name, last, sizeof(p->name));
-    
+  // 换上新页表，准备出内核
   // Commit to the user image.
   oldpagetable = p->pagetable;
   p->pagetable = pagetable;
